@@ -1,0 +1,38 @@
+[
+  {
+    "id_pedido": 1790865269,
+    "data_hora": "2026-10-01 11:34:29",
+    "cliente": {
+      "nome": "aaa",
+      "usuario": "aaa",
+      "forma_pagamento": "PIX"
+    },
+    "itens": [
+      {
+        "item": "Clássico Smash",
+        "quantidade": 1,
+        "preco_unitario": 22.0,
+        "subtotal": 22.0
+      }
+    ],
+    "total": 22.0
+  },
+  {
+    "id_pedido": 1790865277,
+    "data_hora": "2026-10-01 11:34:37",
+    "cliente": {
+      "nome": "aaa",
+      "usuario": "aaa",
+      "forma_pagamento": "PIX"
+    },
+    "itens": [
+      {
+        "item": "Onion Rings",
+        "quantidade": 1,
+        "preco_unitario": 20.0,
+        "subtotal": 20.0
+      }
+    ],
+    "total": 20.0
+  }
+]
