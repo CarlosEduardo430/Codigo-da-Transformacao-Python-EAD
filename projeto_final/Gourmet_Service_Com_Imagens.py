@@ -1,1612 +1,778 @@
 import tkinter as tk
 from tkinter import ttk, messagebox
-import json
-import os
-import io
-import urllib.request
+import sqlite3
+import requests
+import threading
+import unicodedata
+import re
+from io import BytesIO
 from datetime import datetime
 
 try:
     from PIL import Image, ImageTk
+    PIL_OK = True
 except ImportError:
-    Image = None
-    ImageTk = None
-
-# ==========================================================
-# ARQUIVOS DO SISTEMA
-# ==========================================================
-
-ARQUIVO_CARDAPIO = "cardapio.json"
-ARQUIVO_PEDIDOS = "pedidos.json"
-ARQUIVO_USUARIOS = "usuarios.json"
+    PIL_OK = False
 
 
-# ==========================================================
-# TEMAS
-# ==========================================================
+# ============================================================
+# CONFIGURAÇÕES E DADOS DO RESTAURANTE
+# ============================================================
 
-TEMA_ESCURO = {
-    "fundo": "#121212",
-    "card": "#1E1E1E",
-    "acento": "#693DE2",
-    "texto": "#FFFFFF",
-    "subtitulo": "#8B39E7",
-    "entry_bg": "#2A2A2A",
-    "entry_fg": "#FFFFFF",
-    "btn_tema": "☀️ Modo Claro"
+DB_NAME = "restaurante.db"
+
+INFO_RESTAURANTE = {
+    "nome": "Gourmet Service",
+    "endereco": "Av. Paulista, 1000 - Bela Vista, São Paulo - SP",
+    "horario_abertura": 12,   # 12:00 PM
+    "horario_fechamento": 20, # 8:00 PM
+    "taxa_entrega": "Grátis acima de R$ 50,00 (Fixa R$ 7,00 para demais)",
+    "tempo_entrega": "30 a 50 minutos"
 }
 
-TEMA_CLARO = {
-    "fundo": "#F4F4F9",
-    "card": "#FFFFFF",
-    "acento": "#1D46B9",
-    "texto": "#222222",
-    "subtitulo": "#0065D9",
-    "entry_bg": "#FFFFFF",
-    "entry_fg": "#000000",
-    "btn_tema": "🌙 Modo Escuro"
+CORES = {
+    "dark": {
+        "bg": "#121212",
+        "card": "#1E1E1E",
+        "text": "#FFFFFF",
+        "sub": "#BDBDBD",
+        "accent": "#693DE2",
+        "accent2": "#8B39E7",
+        "entry": "#292929",
+        "success": "#35C759",
+        "danger": "#E53935"
+    },
+    "light": {
+        "bg": "#F4F4F9",
+        "card": "#FFFFFF",
+        "text": "#111111",
+        "sub": "#666666",
+        "accent": "#1D46B9",
+        "accent2": "#0065D9",
+        "entry": "#EEEEF5",
+        "success": "#168A32",
+        "danger": "#C62828"
+    }
 }
 
+TEMA = "dark"
 
-# ==========================================================
-# FONTES
-# ==========================================================
-
-FONTE_TITULO = ("Segoe UI", 22, "bold")
-FONTE_TAB = ("Segoe UI", 11, "bold")
-FONTE_ITEM = ("Segoe UI", 11, "bold")
-FONTE_DESC = ("Segoe UI", 9)
-FONTE_TOTAL = ("Segoe UI", 16, "bold")
-FONTE_BOTAO = ("Segoe UI", 11, "bold")
-
-
-QUANTIDADE_COLUNAS = 4
-
-# ==========================================================
-# IMAGENS DOS PRODUTOS
-# ==========================================================
-# As imagens são carregadas pela internet e ficam somente
-# na memória do programa. Não é criada pasta de fotos.
-IMAGENS_PRODUTOS = {
-    "Poderoso Chefão": "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500&q=80",
-    "Clássico Smash": "https://images.unsplash.com/photo-1550547660-d9450f859349?w=500&q=80",
-    "Veggie Supreme": "https://images.unsplash.com/photo-1520072959219-c595dc870360?w=500&q=80",
-    "Duplo Bacon": "https://images.unsplash.com/photo-1571091718767-18b5b1457add?w=500&q=80",
-    "Chicken Crispy": "https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=500&q=80",
-    "Monster Burger": "https://images.unsplash.com/photo-1561758033-d89a9ad46330?w=500&q=80",
-    "Calabresa": "https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=500&q=80",
-    "Marguerita": "https://images.unsplash.com/photo-1579751626657-72bc17010498?w=500&q=80",
-    "Quatro Queijos": "https://images.unsplash.com/photo-1571407970349-bc81e7e96d47?w=500&q=80",
-    "Frango Catupiry": "https://images.unsplash.com/photo-1565299624946-b28f40a0ae38?w=500&q=80",
-    "Batata Rústica": "https://images.unsplash.com/photo-1573080496219-bb080dd4f877?w=500&q=80",
-    "Onion Rings": "https://images.unsplash.com/photo-1639024471283-03518883512d?w=500&q=80",
-    "Batata Cheddar/Bacon": "https://images.unsplash.com/photo-1585109649139-366815a0d713?w=500&q=80",
-    "Soda Artesanal": "https://images.unsplash.com/photo-1551024709-8f23befc6f87?w=500&q=80",
-    "Milkshake": "https://images.unsplash.com/photo-1579954115545-a95591f28bfc?w=500&q=80",
-    "Refrigerante": "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=500&q=80",
-}
-
-TAMANHO_IMAGEM = (230, 130)
+PRODUTOS_INICIAIS = [
+    ("🍔 HAMBÚRGUERES", "Clássico Smash", 22.00, "2x smash 80g e cheddar.", "https://images.unsplash.com/photo-1550547660-d9450f859349?w=500"),
+    ("🍔 HAMBÚRGUERES", "Chicken Crispy", 25.90, "Frango crocante e coleslaw.", "https://images.unsplash.com/photo-1606755962773-d324e0a13086?w=500"),
+    ("🍔 HAMBÚRGUERES", "Poderoso Chefão", 34.90, "Blend 180g, gorgonzola e bacon.", "https://images.unsplash.com/photo-1568901346375-23c9450c58cd?w=500"),
+    ("🍔 HAMBÚRGUERES", "Duplo Bacon", 38.50, "2x blends 180g e triplo bacon.", "https://images.unsplash.com/photo-1565299507177-b0ac66763828?w=500"),
+    ("🍕 PIZZAS", "Marguerita", 42.00, "Mussarela, tomate e manjericão.", "https://images.unsplash.com/photo-1579751626657-72bc17010498?w=500"),
+    ("🍕 PIZZAS", "Calabresa", 45.00, "Molho, mussarela e calabresa.", "https://images.unsplash.com/photo-1574071318508-1cdbab80d002?w=500"),
+    ("🍕 PIZZAS", "Quatro Queijos", 50.00, "Mussarela, provolone, gorgonzola e parmesão.", "https://images.unsplash.com/photo-1571407970349-bc81e7e96d47?w=500"),
+    ("🥤 BEBIDAS", "Refrigerante", 6.50, "Refrigerante gelado 350ml.", "https://images.unsplash.com/photo-1629203851122-3726ecdf080e?w=500"),
+    ("🥤 BEBIDAS", "Soda Artesanal", 12.00, "Soda refrescante e artesanal.", "https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=500"),
+    ("🥤 BEBIDAS", "Milkshake", 18.00, "Milkshake cremoso 400ml.", "https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=500")
+]
 
 
-# ==========================================================
-# CARDÁPIO PADRÃO
-# ==========================================================
+# ============================================================
+# BANCO DE DADOS DINÂMICO E COM MIGRAÇÃO AUTOMÁTICA
+# ============================================================
 
-CARDAPIO_PADRAO = {
-    "cardapio": [
+def criar_banco():
+    conexao = sqlite3.connect(DB_NAME)
+    cursor = conexao.cursor()
 
-        {
-            "categoria": "🍔 HAMBÚRGUERES",
-            "itens": [
-                {
-                    "id": 101,
-                    "nome": "Poderoso Chefão",
-                    "preco": 34.90,
-                    "descricao": "Blend 180g, gorgonzola, cebola caramelizada e bacon."
-                },
-                {
-                    "id": 102,
-                    "nome": "Clássico Smash",
-                    "preco": 22.00,
-                    "descricao": "Dois hambúrgueres smash de 80g, cheddar e picles."
-                },
-                {
-                    "id": 103,
-                    "nome": "Veggie Supreme",
-                    "preco": 29.90,
-                    "descricao": "Hambúrguer de grão-de-bico, rúcula e maionese de ervas."
-                },
-                {
-                    "id": 104,
-                    "nome": "Duplo Bacon",
-                    "preco": 38.50,
-                    "descricao": "Dois blends 180g, triplo bacon e molho barbecue."
-                },
-                {
-                    "id": 105,
-                    "nome": "Chicken Crispy",
-                    "preco": 25.90,
-                    "descricao": "Frango crocante, salada coleslaw e maionese."
-                },
-                {
-                    "id": 106,
-                    "nome": "Monster Burger",
-                    "preco": 44.00,
-                    "descricao": "Três blends 150g, quádruplo cheddar e anéis de cebola."
-                }
-            ]
-        },
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            usuario TEXT PRIMARY KEY,
+            nome TEXT NOT NULL,
+            senha TEXT NOT NULL
+        )
+    """)
 
-        {
-            "categoria": "🍕 PIZZAS",
-            "itens": [
-                {
-                    "id": 201,
-                    "nome": "Calabresa",
-                    "preco": 45.00,
-                    "descricao": "Molho de tomate pelati, calabresa fatiada e cebola."
-                },
-                {
-                    "id": 202,
-                    "nome": "Marguerita",
-                    "preco": 42.00,
-                    "descricao": "Muçarela de búfala, tomate e manjericão fresco."
-                },
-                {
-                    "id": 203,
-                    "nome": "Quatro Queijos",
-                    "preco": 50.00,
-                    "descricao": "Muçarela, provolone, gorgonzola e parmesão."
-                },
-                {
-                    "id": 204,
-                    "nome": "Frango Catupiry",
-                    "preco": 48.00,
-                    "descricao": "Frango desfiado temperado com legítimo Catupiry."
-                }
-            ]
-        },
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS produtos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            categoria TEXT NOT NULL,
+            nome TEXT NOT NULL,
+            preco REAL NOT NULL,
+            descricao TEXT NOT NULL,
+            imagem TEXT NOT NULL
+        )
+    """)
 
-        {
-            "categoria": "🍟 ACOMPANHAMENTOS",
-            "itens": [
-                {
-                    "id": 301,
-                    "nome": "Batata Rústica",
-                    "preco": 18.00,
-                    "descricao": "Corte caseiro com alecrim e páprica defumada."
-                },
-                {
-                    "id": 302,
-                    "nome": "Onion Rings",
-                    "preco": 20.00,
-                    "descricao": "Anéis de cebola crocantes com molho barbecue."
-                },
-                {
-                    "id": 303,
-                    "nome": "Batata Cheddar/Bacon",
-                    "preco": 28.00,
-                    "descricao": "Porção grande com cheddar cremoso e bacon."
-                }
-            ]
-        },
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pedidos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            cliente TEXT NOT NULL,
+            usuario TEXT NOT NULL,
+            data_hora TEXT NOT NULL,
+            itens TEXT NOT NULL,
+            total REAL NOT NULL,
+            cep TEXT NOT NULL DEFAULT '',
+            endereco TEXT NOT NULL DEFAULT '',
+            numero TEXT NOT NULL DEFAULT '',
+            forma_pagamento TEXT NOT NULL DEFAULT ''
+        )
+    """)
 
-        {
-            "categoria": "🥤 BEBIDAS",
-            "itens": [
-                {
-                    "id": 401,
-                    "nome": "Soda Artesanal",
-                    "preco": 12.00,
-                    "descricao": "Frutas vermelhas, limão siciliano e gás (500ml)."
-                },
-                {
-                    "id": 402,
-                    "nome": "Milkshake",
-                    "preco": 18.00,
-                    "descricao": "Morango, Chocolate ou Ovaltine (400ml)."
-                },
-                {
-                    "id": 403,
-                    "nome": "Refrigerante",
-                    "preco": 6.50,
-                    "descricao": "Lata 350ml (Coca, Guaraná ou Sprite)."
-                }
-            ]
-        }
-    ]
-}
+    # Atualiza a estrutura da tabela de pedidos se o banco de dados for antigo
+    cursor.execute("PRAGMA table_info(pedidos)")
+    colunas_existentes = [coluna[1] for coluna in cursor.fetchall()]
+    
+    colunas_necessarias = {
+        "cep": "TEXT NOT NULL DEFAULT ''",
+        "endereco": "TEXT NOT NULL DEFAULT ''",
+        "numero": "TEXT NOT NULL DEFAULT ''",
+        "forma_pagamento": "TEXT NOT NULL DEFAULT ''"
+    }
 
+    for coluna, tipo in colunas_necessarias.items():
+        if coluna not in colunas_existentes:
+            cursor.execute(f"ALTER TABLE pedidos ADD COLUMN {coluna} {tipo}")
 
-# ==========================================================
-# FUNÇÕES DE ARQUIVO
-# ==========================================================
-
-def carregar_cardapio():
-    if not os.path.exists(ARQUIVO_CARDAPIO):
-
-        with open(
-            ARQUIVO_CARDAPIO,
-            "w",
-            encoding="utf-8"
-        ) as arquivo:
-
-            json.dump(
-                CARDAPIO_PADRAO,
-                arquivo,
-                ensure_ascii=False,
-                indent=2
-            )
-
-        return CARDAPIO_PADRAO["cardapio"]
-
-    try:
-
-        with open(
-            ARQUIVO_CARDAPIO,
-            "r",
-            encoding="utf-8"
-        ) as arquivo:
-
-            dados = json.load(arquivo)
-
-        return dados.get("cardapio", [])
-
-    except Exception:
-
-        return CARDAPIO_PADRAO["cardapio"]
-
-
-def carregar_usuarios():
-
-    if not os.path.exists(ARQUIVO_USUARIOS):
-        return {}
-
-    try:
-
-        with open(
-            ARQUIVO_USUARIOS,
-            "r",
-            encoding="utf-8"
-        ) as arquivo:
-
-            dados = json.load(arquivo)
-
-            # Garante que o arquivo tenha o formato esperado
-            if isinstance(dados, dict):
-                return dados
-
-            return {}
-
-    except (json.JSONDecodeError, OSError):
-
-        return {}
-
-
-def salvar_usuarios(usuarios):
-
-    with open(
-        ARQUIVO_USUARIOS,
-        "w",
-        encoding="utf-8"
-    ) as arquivo:
-
-        json.dump(
-            usuarios,
-            arquivo,
-            ensure_ascii=False,
-            indent=2
+    cursor.execute("SELECT COUNT(*) FROM produtos")
+    if cursor.fetchone()[0] == 0:
+        cursor.executemany(
+            "INSERT INTO produtos (categoria, nome, preco, descricao, imagem) VALUES (?, ?, ?, ?, ?)",
+            PRODUTOS_INICIAIS
         )
 
-
-def registrar_pedido(pedido):
-
-    historico = []
-
-    if os.path.exists(ARQUIVO_PEDIDOS):
-
-        try:
-
-            with open(
-                ARQUIVO_PEDIDOS,
-                "r",
-                encoding="utf-8"
-            ) as arquivo:
-
-                historico = json.load(arquivo)
-
-        except (json.JSONDecodeError, OSError):
-
-            historico = []
-
-    if not isinstance(historico, list):
-        historico = []
-
-    historico.append(pedido)
-
-    with open(
-        ARQUIVO_PEDIDOS,
-        "w",
-        encoding="utf-8"
-    ) as arquivo:
-
-        json.dump(
-            historico,
-            arquivo,
-            ensure_ascii=False,
-            indent=2
-        )
+    conexao.commit()
+    conexao.close()
 
 
-# ==========================================================
-# SISTEMA
-# ==========================================================
+def carregar_produtos_bd():
+    conexao = sqlite3.connect(DB_NAME)
+    cursor = conexao.cursor()
+    cursor.execute("SELECT categoria, nome, preco, descricao, imagem FROM produtos")
+    linhas = cursor.fetchall()
+    conexao.close()
 
-class SistemaGourmetApp:
+    produtos_dict = {}
+    for cat, nome, preco, desc, img in linhas:
+        if cat not in produtos_dict:
+            produtos_dict[cat] = []
+        produtos_dict[cat].append({
+            "nome": nome,
+            "preco": preco,
+            "descricao": desc,
+            "imagem": img,
+            "categoria": cat
+        })
+    return produtos_dict
+
+
+# ============================================================
+# FUNÇÕES AUXILIARES
+# ============================================================
+
+def normalizar_texto(texto):
+    texto = str(texto).lower().strip()
+    texto = unicodedata.normalize("NFD", texto)
+    texto = "".join(c for c in texto if unicodedata.category(c) != "Mn")
+    texto = re.sub(r"[^a-z0-9\s]", " ", texto)
+    return re.sub(r"\s+", " ", texto)
+
+
+def formatar_moeda(valor):
+    return f"R$ {valor:.2f}".replace(".", ",")
+
+
+def restaurante_aberto():
+    hora_atual = datetime.now().hour
+    return INFO_RESTAURANTE["horario_abertura"] <= hora_atual < INFO_RESTAURANTE["horario_fechamento"]
+
+
+def todos_produtos():
+    produtos_dict = carregar_produtos_bd()
+    lista = []
+    for prods in produtos_dict.values():
+        lista.extend(prods)
+    return lista
+
+
+# ============================================================
+# APLICAÇÃO PRINCIPAL
+# ============================================================
+
+class GourmetService:
 
     def __init__(self, root):
-
         self.root = root
-
         self.root.title("Gourmet Service")
+        self.root.geometry("1080x720")
+        self.root.minsize(900, 620)
 
-        # Tenta abrir maximizado; se não funcionar, usa um tamanho padrão
+        self.usuario_atual = None
+        self.nome_atual = None
+        self.carrinho = {}
+        self.imagens = []
+
+        self.janela_chat = None
+        self.chat_texto = None
+        self.chat_entry = None
+
+        criar_banco()
+        self.aplicar_estilo()
+        self.mostrar_login()
+
+    def aplicar_estilo(self):
+        cores = CORES[TEMA]
+        self.root.configure(bg=cores["bg"])
+        style = ttk.Style()
         try:
-            self.root.state("zoomed")
-        except tk.TclError:
-            self.root.geometry("1200x800")
+            style.theme_use("clam")
+        except Exception:
+            pass
 
-        self.modo_escuro = True
-
-        self.cores = TEMA_ESCURO
-
-        self.menu_data = carregar_cardapio()
-
-        self.usuarios = carregar_usuarios()
-
-        self.dados_cliente = {
-            "nome": "",
-            "usuario": "",
-            "pagamento": "PIX"
-        }
-
-        self.pedidos = {}
-
-        self.tela_atual = "login"
-
-        self.container = tk.Frame(self.root)
-
-        self.container.pack(
-            fill="both",
-            expand=True
+        style.configure(
+            "TButton",
+            background=cores["accent"],
+            foreground="white",
+            font=("Arial", 10, "bold"),
+            padding=8
         )
-
-        self.mostrar_tela_login()
-
-
-    # ======================================================
-    # TEMA
-    # ======================================================
+        style.map("TButton", background=[("active", cores["accent2"])])
 
     def alternar_tema(self):
-
-        self.modo_escuro = not self.modo_escuro
-
-        self.cores = (
-            TEMA_ESCURO
-            if self.modo_escuro
-            else TEMA_CLARO
-        )
-
-        if self.tela_atual == "login":
-
-            self.mostrar_tela_login()
-
+        global TEMA
+        TEMA = "light" if TEMA == "dark" else "dark"
+        self.aplicar_estilo()
+        if self.usuario_atual:
+            self.mostrar_menu()
         else:
+            self.mostrar_login()
 
-            self.mostrar_tela_cardapio()
+    def sair_da_conta(self):
+        self.usuario_atual = None
+        self.nome_atual = None
+        self.carrinho.clear()
+        if self.janela_chat:
+            self.fechar_chat()
+        self.mostrar_login()
 
-
-    def criar_botao_tema(self, parent):
-
-        botao = tk.Button(
-            parent,
-            text=self.cores["btn_tema"],
-            command=self.alternar_tema,
-            bg=self.cores["fundo"],
-            fg=self.cores["texto"],
-            font=("Segoe UI", 10, "bold"),
-            relief="groove",
-            cursor="hand2",
-            padx=12,
-            pady=4
-        )
-
-        botao.pack(
-            side="right",
-            padx=15
-        )
-
-
-    # ======================================================
-    # LOGIN
-    # ======================================================
-
-    def mostrar_tela_login(self):
-
-        self.tela_atual = "login"
-
-        self.root.configure(
-            bg=self.cores["fundo"]
-        )
-
-        for widget in self.container.winfo_children():
-
+    def limpar_tela(self):
+        for widget in self.root.winfo_children():
             widget.destroy()
+        self.imagens.clear()
 
-        self.container.configure(
-            bg=self.cores["fundo"]
-        )
+    # ========================================================
+    # TELA DE LOGIN
+    # ========================================================
 
-        # Barra superior
+    def mostrar_login(self):
+        self.limpar_tela()
+        cores = CORES[TEMA]
 
-        top = tk.Frame(
-            self.container,
-            bg=self.cores["fundo"]
-        )
-
-        top.pack(
-            fill="x",
-            pady=10
-        )
-
-        self.criar_botao_tema(top)
-
-        # Card do login
-
-        card = tk.Frame(
-            self.container,
-            bg=self.cores["card"],
-            padx=45,
-            pady=35,
-            bd=1,
-            relief="solid"
-        )
-
-        card.place(
-            relx=0.5,
-            rely=0.5,
-            anchor="center"
-        )
+        frame = tk.Frame(self.root, bg=cores["bg"])
+        frame.pack(expand=True)
 
         tk.Label(
-            card,
-            text="🔥 GOURMET SERVICE 🔥",
-            font=FONTE_TITULO,
-            bg=self.cores["card"],
-            fg=self.cores["acento"]
-        ).pack(pady=(0, 5))
+            frame,
+            text="🍔 GOURMET SERVICE",
+            font=("Arial", 28, "bold"),
+            bg=cores["bg"],
+            fg=cores["accent2"]
+        ).pack(pady=(20, 5))
 
+        status_txt = "🟢 Aberto Agora" if restaurante_aberto() else "🔴 Fechado Agora"
         tk.Label(
-            card,
-            text="LOGIN",
-            font=("Segoe UI", 16, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack()
+            frame,
+            text=f"Cardápio Dinâmico | Status: {status_txt}",
+            font=("Arial", 11, "bold"),
+            bg=cores["bg"],
+            fg=cores["success"] if restaurante_aberto() else cores["danger"]
+        ).pack(pady=(0, 20))
 
-        tk.Label(
-            card,
-            text="Entre para acessar o cardápio",
-            font=("Segoe UI", 10),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(pady=(3, 20))
+        card = tk.Frame(frame, bg=cores["card"], padx=35, pady=30)
+        card.pack()
 
+        tk.Label(card, text="Usuário", bg=cores["card"], fg=cores["text"], font=("Arial", 11, "bold")).pack(anchor="w")
+        self.login_usuario = tk.Entry(card, width=35, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat", font=("Arial", 11))
+        self.login_usuario.pack(pady=(5, 15), ipady=7)
 
-        # Usuário
+        tk.Label(card, text="Senha", bg=cores["card"], fg=cores["text"], font=("Arial", 11, "bold")).pack(anchor="w")
+        self.login_senha = tk.Entry(card, width=35, show="*", bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat", font=("Arial", 11))
+        self.login_senha.pack(pady=(5, 20), ipady=7)
 
-        tk.Label(
-            card,
-            text="👤 Usuário",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(anchor="w")
-
-        self.ent_login_usuario = tk.Entry(
-            card,
-            font=("Segoe UI", 11),
-            width=32,
-            bg=self.cores["entry_bg"],
-            fg=self.cores["entry_fg"],
-            insertbackground=self.cores["texto"]
-        )
-
-        self.ent_login_usuario.pack(
-            pady=(3, 12)
-        )
-
-
-        # Senha
-
-        tk.Label(
-            card,
-            text="🔒 Senha",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(anchor="w")
-
-        frame_senha = tk.Frame(
-            card,
-            bg=self.cores["card"]
-        )
-
-        frame_senha.pack(
-            fill="x",
-            pady=(3, 5)
-        )
-
-        self.ent_login_senha = tk.Entry(
-            frame_senha,
-            font=("Segoe UI", 11),
-            width=25,
-            show="*",
-            bg=self.cores["entry_bg"],
-            fg=self.cores["entry_fg"],
-            insertbackground=self.cores["texto"]
-        )
-
-        self.ent_login_senha.pack(
-            side="left"
-        )
-
-        self.mostrar_senha = False
-
-        self.btn_senha = tk.Button(
-            frame_senha,
-            text="👁",
-            command=self.alternar_senha,
-            bg=self.cores["entry_bg"],
-            fg=self.cores["texto"],
-            relief="flat",
-            cursor="hand2"
-        )
-
-        self.btn_senha.pack(
-            side="left",
-            padx=5
-        )
-
-
-        # Botão login
+        ttk.Button(card, text="ENTRAR", command=self.fazer_login).pack(fill="x", pady=5)
+        ttk.Button(card, text="CRIAR NOVA CONTA", command=self.mostrar_cadastro).pack(fill="x", pady=5)
 
         tk.Button(
-            card,
-            text="ENTRAR ➜",
-            command=self.fazer_login,
-            bg=self.cores["acento"],
-            fg="white",
-            font=FONTE_BOTAO,
-            relief="flat",
-            cursor="hand2",
-            padx=15,
-            pady=9
-        ).pack(
-            fill="x",
-            pady=(15, 8)
-        )
+            card, text="☀️ / 🌙 Alterar tema", command=self.alternar_tema,
+            bg=cores["card"], fg=cores["accent2"], relief="flat", font=("Arial", 10, "bold"), cursor="hand2"
+        ).pack(pady=(15, 0))
 
-
-        # Cadastro
-
-        tk.Button(
-            card,
-            text="📝 Criar nova conta",
-            command=self.mostrar_tela_cadastro,
-            bg=self.cores["card"],
-            fg=self.cores["subtitulo"],
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            cursor="hand2"
-        ).pack()
-
-
-        # Limpar
-
-        tk.Button(
-            card,
-            text="Limpar",
-            command=self.limpar_login,
-            bg=self.cores["card"],
-            fg=self.cores["texto"],
-            font=("Segoe UI", 9),
-            relief="flat",
-            cursor="hand2"
-        ).pack(
-            pady=(8, 0)
-        )
-
-
-    def alternar_senha(self):
-
-        self.mostrar_senha = not self.mostrar_senha
-
-        if self.mostrar_senha:
-
-            self.ent_login_senha.config(
-                show=""
-            )
-
-        else:
-
-            self.ent_login_senha.config(
-                show="*"
-            )
-
-
-    def limpar_login(self):
-
-        self.ent_login_usuario.delete(
-            0,
-            tk.END
-        )
-
-        self.ent_login_senha.delete(
-            0,
-            tk.END
-        )
-
-        self.ent_login_usuario.focus()
-
+        self.login_usuario.bind("<Return>", lambda e: self.fazer_login())
+        self.login_senha.bind("<Return>", lambda e: self.fazer_login())
 
     def fazer_login(self):
-
-        usuario = self.ent_login_usuario.get().strip()
-
-        senha = self.ent_login_senha.get().strip()
+        usuario = self.login_usuario.get().strip()
+        senha = self.login_senha.get().strip()
 
         if not usuario or not senha:
-
-            messagebox.showwarning(
-                "Login",
-                "Digite o usuário e a senha."
-            )
-
+            messagebox.showwarning("Atenção", "Preencha o usuário e a senha.")
             return
 
+        conexao = sqlite3.connect(DB_NAME)
+        cursor = conexao.cursor()
+        cursor.execute("SELECT nome FROM usuarios WHERE usuario = ? AND senha = ?", (usuario, senha))
+        resultado = cursor.fetchone()
+        conexao.close()
 
-        if usuario not in self.usuarios:
+        if resultado:
+            self.usuario_atual = usuario
+            self.nome_atual = resultado[0]
+            self.carrinho.clear()
+            self.mostrar_menu()
+        else:
+            messagebox.showerror("Erro", "Usuário ou senha incorretos.")
 
-            messagebox.showerror(
-                "Login",
-                "Usuário não encontrado.\n\nCrie uma conta primeiro."
-            )
+    # ========================================================
+    # TELA DE CADASTRO
+    # ========================================================
 
-            return
+    def mostrar_cadastro(self):
+        self.limpar_tela()
+        cores = CORES[TEMA]
 
+        frame = tk.Frame(self.root, bg=cores["bg"])
+        frame.pack(expand=True)
 
-        dados = self.usuarios[usuario]
+        tk.Label(frame, text="👤 CRIAR CONTA", font=("Arial", 26, "bold"), bg=cores["bg"], fg=cores["accent2"]).pack(pady=(10, 25))
 
-        if dados["senha"] != senha:
+        card = tk.Frame(frame, bg=cores["card"], padx=35, pady=30)
+        card.pack()
 
-            messagebox.showerror(
-                "Login",
-                "Senha incorreta."
-            )
+        campos = []
+        for texto, mostrar in [("Nome completo", ""), ("Usuário", ""), ("Senha", "*"), ("Confirmar senha", "*")]:
+            tk.Label(card, text=texto, bg=cores["card"], fg=cores["text"], font=("Arial", 11, "bold")).pack(anchor="w")
+            ent = tk.Entry(card, width=35, show=mostrar, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat", font=("Arial", 11))
+            ent.pack(pady=(5, 12), ipady=6)
+            campos.append(ent)
 
-            return
+        self.cad_nome, self.cad_usuario, self.cad_senha, self.cad_confirmar = campos
 
-
-        self.dados_cliente = {
-            "nome": dados["nome"],
-            "usuario": usuario,
-            "pagamento": dados.get(
-                "pagamento",
-                "PIX"
-            )
-        }
-
-        messagebox.showinfo(
-            "Bem-vindo!",
-            f"Olá, {dados['nome']}!\n\nLogin realizado com sucesso."
-        )
-
-        self.mostrar_tela_cardapio()
-
-
-    # ======================================================
-    # CADASTRO
-    # ======================================================
-
-    def mostrar_tela_cadastro(self):
-
-        self.tela_atual = "cadastro"
-
-        self.root.configure(
-            bg=self.cores["fundo"]
-        )
-
-        for widget in self.container.winfo_children():
-
-            widget.destroy()
-
-        top = tk.Frame(
-            self.container,
-            bg=self.cores["fundo"]
-        )
-
-        top.pack(
-            fill="x",
-            pady=10
-        )
-
-        self.criar_botao_tema(top)
-
-
-        card = tk.Frame(
-            self.container,
-            bg=self.cores["card"],
-            padx=45,
-            pady=30,
-            bd=1,
-            relief="solid"
-        )
-
-        card.place(
-            relx=0.5,
-            rely=0.5,
-            anchor="center"
-        )
-
-
-        tk.Label(
-            card,
-            text="📝 CRIAR CONTA",
-            font=FONTE_TITULO,
-            bg=self.cores["card"],
-            fg=self.cores["acento"]
-        ).pack(
-            pady=(0, 20)
-        )
-
-
-        # Nome
-
-        tk.Label(
-            card,
-            text="Nome completo",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(anchor="w")
-
-        self.ent_nome = tk.Entry(
-            card,
-            font=("Segoe UI", 11),
-            width=32,
-            bg=self.cores["entry_bg"],
-            fg=self.cores["entry_fg"],
-            insertbackground=self.cores["texto"]
-        )
-
-        self.ent_nome.pack(
-            pady=(3, 12)
-        )
-
-
-        # Usuário
-
-        tk.Label(
-            card,
-            text="Nome de usuário",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(anchor="w")
-
-        self.ent_usuario = tk.Entry(
-            card,
-            font=("Segoe UI", 11),
-            width=32,
-            bg=self.cores["entry_bg"],
-            fg=self.cores["entry_fg"],
-            insertbackground=self.cores["texto"]
-        )
-
-        self.ent_usuario.pack(
-            pady=(3, 12)
-        )
-
-
-        # Senha
-
-        tk.Label(
-            card,
-            text="Senha",
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["card"],
-            fg=self.cores["texto"]
-        ).pack(anchor="w")
-
-        self.ent_senha = tk.Entry(
-            card,
-            font=("Segoe UI", 11),
-            width=32,
-            show="*",
-            bg=self.cores["entry_bg"],
-            fg=self.cores["entry_fg"],
-            insertbackground=self.cores["texto"]
-        )
-
-        self.ent_senha.pack(
-            pady=(3, 12)
-        )
-
-
-        # Criar
-
-        tk.Button(
-            card,
-            text="CRIAR CONTA ➜",
-            command=self.criar_conta,
-            bg=self.cores["acento"],
-            fg="white",
-            font=FONTE_BOTAO,
-            relief="flat",
-            cursor="hand2",
-            padx=15,
-            pady=9
-        ).pack(
-            fill="x",
-            pady=(0, 8)
-        )
-
-
-        # Voltar
-
-        tk.Button(
-            card,
-            text="⬅ Voltar para Login",
-            command=self.mostrar_tela_login,
-            bg=self.cores["card"],
-            fg=self.cores["subtitulo"],
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            cursor="hand2"
-        ).pack()
-
+        ttk.Button(card, text="CRIAR CONTA", command=self.criar_conta).pack(fill="x", pady=5)
+        ttk.Button(card, text="VOLTAR PARA LOGIN", command=self.mostrar_login).pack(fill="x", pady=5)
 
     def criar_conta(self):
+        nome = self.cad_nome.get().strip()
+        usuario = self.cad_usuario.get().strip()
+        senha = self.cad_senha.get()
+        confirmar = self.cad_confirmar.get()
 
-        nome = self.ent_nome.get().strip()
-
-        usuario = self.ent_usuario.get().strip()
-
-        senha = self.ent_senha.get().strip()
-
-        # A forma de pagamento será escolhida no momento do pedido.
-        pagamento = "PIX"
-
-
-        if not nome or not usuario or not senha:
-
-            messagebox.showwarning(
-                "Cadastro",
-                "Preencha todos os campos."
-            )
-
+        if not nome or not usuario or not senha or not confirmar:
+            messagebox.showwarning("Atenção", "Preencha todos os campos.")
             return
 
-
-        if len(usuario) < 3:
-
-            messagebox.showwarning(
-                "Cadastro",
-                "O usuário precisa ter pelo menos 3 caracteres."
-            )
-
+        if senha != confirmar:
+            messagebox.showerror("Erro", "As senhas não coincidem.")
             return
-
-
-        if len(senha) < 4:
-
-            messagebox.showwarning(
-                "Cadastro",
-                "A senha precisa ter pelo menos 4 caracteres."
-            )
-
-            return
-
-
-        if usuario in self.usuarios:
-
-            messagebox.showerror(
-                "Cadastro",
-                "Esse nome de usuário já existe."
-            )
-
-            return
-
-
-        # Cria usuário automaticamente
-
-        self.usuarios[usuario] = {
-            "nome": nome,
-            "senha": senha,
-            "pagamento": pagamento
-        }
-
-
-        salvar_usuarios(
-            self.usuarios
-        )
-
-
-        messagebox.showinfo(
-            "Conta criada!",
-            f"Conta de @{usuario} criada com sucesso!\n\nAgora faça login."
-        )
-
-
-        self.mostrar_tela_login()
-
-        self.ent_login_usuario.insert(
-            0,
-            usuario
-        )
-
-        self.ent_login_senha.focus()
-
-
-    # ======================================================
-    # CARDÁPIO
-    # ======================================================
-
-    def mostrar_tela_cardapio(self):
-
-        self.tela_atual = "cardapio"
-
-        self.root.configure(
-            bg=self.cores["fundo"]
-        )
-
-        for widget in self.container.winfo_children():
-
-            widget.destroy()
-
-
-        # HEADER
-
-        header = tk.Frame(
-            self.container,
-            bg=self.cores["acento"],
-            height=90
-        )
-
-        header.pack(
-            fill="x"
-        )
-
-
-        frame_top = tk.Frame(
-            header,
-            bg=self.cores["acento"]
-        )
-
-        frame_top.pack(
-            fill="x"
-        )
-
-
-        tk.Label(
-            frame_top,
-            text="🔥 GOURMET SERVICE 🔥",
-            font=FONTE_TITULO,
-            bg=self.cores["acento"],
-            fg="white"
-        ).pack(
-            side="left",
-            padx=20,
-            pady=(10, 0)
-        )
-
-
-        self.criar_botao_tema(
-            frame_top
-        )
-
-
-        info = (
-            f"👤 {self.dados_cliente['nome']} "
-            f"(@{self.dados_cliente['usuario']})"
-            f"  |  💳 {self.dados_cliente['pagamento']}"
-        )
-
-
-        tk.Label(
-            header,
-            text=info,
-            font=("Segoe UI", 10, "bold"),
-            bg=self.cores["acento"],
-            fg="white"
-        ).pack(
-            anchor="w",
-            padx=20,
-            pady=(0, 10)
-        )
-
-
-        # NOTEBOOK
-
-        style = ttk.Style()
-
-        style.theme_use("clam")
-
-        style.configure(
-            "TNotebook",
-            background=self.cores["fundo"],
-            borderwidth=0
-        )
-
-        style.configure(
-            "TNotebook.Tab",
-            background=self.cores["card"],
-            foreground=self.cores["texto"],
-            font=FONTE_TAB,
-            padding=[15, 6]
-        )
-
-        style.map(
-            "TNotebook.Tab",
-            background=[
-                ("selected", self.cores["acento"])
-            ],
-            foreground=[
-                ("selected", "white")
-            ]
-        )
-
-
-        self.notebook = ttk.Notebook(
-            self.container
-        )
-
-        self.notebook.pack(
-            fill="both",
-            expand=True,
-            padx=15,
-            pady=10
-        )
-
-
-        self.construir_abas()
-
-
-        # FOOTER
-
-        footer = tk.Frame(
-            self.container,
-            bg=self.cores["card"],
-            height=100
-        )
-
-        footer.pack(
-            fill="x",
-            side="bottom"
-        )
-
-
-        self.lbl_total = tk.Label(
-            footer,
-            text="TOTAL: R$ 0.00",
-            font=FONTE_TOTAL,
-            bg=self.cores["card"],
-            fg=self.cores["acento"]
-        )
-
-        self.lbl_total.pack(
-            pady=5
-        )
-
-
-        frame_botoes = tk.Frame(
-            footer,
-            bg=self.cores["card"]
-        )
-
-        frame_botoes.pack()
-
-
-        tk.Button(
-            frame_botoes,
-            text="⬅ Sair",
-            command=self.mostrar_tela_login,
-            bg="#555555",
-            fg="white",
-            font=("Segoe UI", 10, "bold"),
-            relief="flat",
-            cursor="hand2",
-            padx=15,
-            pady=6
-        ).pack(
-            side="left",
-            padx=10
-        )
-
-
-        tk.Button(
-            frame_botoes,
-            text="🛒 FINALIZAR PEDIDO",
-            command=self.finalizar_pedido,
-            bg=self.cores["acento"],
-            fg="white",
-            font=FONTE_BOTAO,
-            relief="flat",
-            cursor="hand2",
-            padx=18,
-            pady=6
-        ).pack(
-            side="left",
-            padx=10
-        )
-
-
-        self.atualizar_total()
-
-
-    # ======================================================
-    # ABAS DO CARDÁPIO
-    # ======================================================
-
-    def carregar_imagem_produto(self, nome):
-        """Baixa a imagem pela internet e mantém na memória."""
-        if Image is None or ImageTk is None:
-            return None
-
-        if not hasattr(self, "imagens_cache"):
-            self.imagens_cache = {}
-
-        if nome in self.imagens_cache:
-            return self.imagens_cache[nome]
-
-        url = IMAGENS_PRODUTOS.get(nome)
-        if not url:
-            return None
 
         try:
-            requisicao = urllib.request.Request(
-                url,
-                headers={"User-Agent": "Mozilla/5.0"}
-            )
+            conexao = sqlite3.connect(DB_NAME)
+            cursor = conexao.cursor()
+            cursor.execute("INSERT INTO usuarios (usuario, nome, senha) VALUES (?, ?, ?)", (usuario, nome, senha))
+            conexao.commit()
+            conexao.close()
+            messagebox.showinfo("Sucesso", "Conta criada com sucesso!")
+            self.mostrar_login()
+        except sqlite3.IntegrityError:
+            messagebox.showerror("Erro", "Esse nome de usuário já existe.")
 
-            with urllib.request.urlopen(requisicao, timeout=5) as resposta:
-                dados = resposta.read()
+    # ========================================================
+    # CARDÁPIO DINÂMICO
+    # ========================================================
 
-            imagem = Image.open(io.BytesIO(dados)).convert("RGB")
-            imagem.thumbnail(TAMANHO_IMAGEM)
+    def mostrar_menu(self):
+        self.limpar_tela()
+        cores = CORES[TEMA]
 
-            fundo = Image.new("RGB", TAMANHO_IMAGEM)
-            x = (TAMANHO_IMAGEM[0] - imagem.width) // 2
-            y = (TAMANHO_IMAGEM[1] - imagem.height) // 2
-            fundo.paste(imagem, (x, y))
+        header = tk.Frame(self.root, bg=cores["card"], height=70)
+        header.pack(fill="x")
+        header.pack_propagate(False)
 
-            foto = ImageTk.PhotoImage(fundo)
-            self.imagens_cache[nome] = foto
-            return foto
+        tk.Label(header, text="🍔 Gourmet Service", font=("Arial", 20, "bold"), bg=cores["card"], fg=cores["accent2"]).pack(side="left", padx=20)
+        tk.Label(header, text=f"Olá, {self.nome_atual}!", font=("Arial", 11), bg=cores["card"], fg=cores["sub"]).pack(side="left", padx=10)
 
-        except Exception:
-            return None
+        total_itens = sum(i["quantidade"] for i in self.carrinho.values())
+        txt_carrinho = f"🛒 Carrinho ({total_itens})" if total_itens > 0 else "🛒 Carrinho"
 
-    def construir_abas(self):
+        ttk.Button(header, text="🚪 Sair", command=self.sair_da_conta).pack(side="right", padx=8)
+        ttk.Button(header, text="📜 Histórico", command=self.mostrar_historico).pack(side="right", padx=8)
+        ttk.Button(header, text="🤖 Suporte IA", command=self.abrir_chat).pack(side="right", padx=8)
+        ttk.Button(header, text=txt_carrinho, command=self.mostrar_carrinho).pack(side="right", padx=8)
+        ttk.Button(header, text="☀️/🌙", command=self.alternar_tema).pack(side="right", padx=8)
 
-        self.pedidos = {}
+        container = tk.Frame(self.root, bg=cores["bg"])
+        container.pack(fill="both", expand=True)
 
+        canvas = tk.Canvas(container, bg=cores["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
 
-        for bloco in self.menu_data:
+        conteudo = tk.Frame(canvas, bg=cores["bg"])
+        conteudo.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
 
-            categoria = bloco["categoria"]
+        canvas.create_window((0, 0), window=conteudo, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
 
-            itens = bloco["itens"]
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
 
+        produtos_por_categoria = carregar_produtos_bd()
 
-            frame_aba = tk.Frame(
-                self.notebook,
-                bg=self.cores["fundo"]
-            )
+        for categoria, produtos in produtos_por_categoria.items():
+            tk.Label(conteudo, text=categoria, font=("Arial", 19, "bold"), bg=cores["bg"], fg=cores["text"]).pack(anchor="w", padx=25, pady=(25, 12))
+            grade = tk.Frame(conteudo, bg=cores["bg"])
+            grade.pack(fill="x", padx=20)
 
+            for col, prod in enumerate(produtos):
+                self.criar_card_produto(grade, prod, col)
 
-            self.notebook.add(
-                frame_aba,
-                text=categoria
-            )
+    def criar_card_produto(self, parent, produto, coluna):
+        cores = CORES[TEMA]
 
+        card = tk.Frame(parent, bg=cores["card"], width=280, height=340)
+        card.grid(row=0, column=coluna, padx=8, pady=8, sticky="n")
+        card.grid_propagate(False)
 
-            canvas = tk.Canvas(
-                frame_aba,
-                bg=self.cores["fundo"],
-                highlightthickness=0
-            )
+        img_label = tk.Label(card, text="🍽️", bg=cores["card"], fg=cores["text"], font=("Arial", 45))
+        img_label.pack(pady=(12, 5))
 
+        self.carregar_imagem(produto["imagem"], img_label)
 
-            scrollbar = ttk.Scrollbar(
-                frame_aba,
-                orient="vertical",
-                command=canvas.yview
-            )
+        tk.Label(card, text=produto["nome"], font=("Arial", 14, "bold"), bg=cores["card"], fg=cores["text"]).pack()
+        tk.Label(card, text=produto["descricao"], font=("Arial", 9), bg=cores["card"], fg=cores["sub"], wraplength=240).pack(pady=5)
+        tk.Label(card, text=formatar_moeda(produto["preco"]), font=("Arial", 15, "bold"), bg=cores["card"], fg=cores["accent2"]).pack(pady=5)
 
+        ttk.Button(card, text="➕ Adicionar", command=lambda p=produto: self.adicionar_carrinho(p)).pack(padx=25, pady=8, fill="x")
 
-            scrollable = tk.Frame(
-                canvas,
-                bg=self.cores["fundo"]
-            )
-
-
-            scrollable.bind(
-                "<Configure>",
-                lambda e, c=canvas:
-                c.configure(
-                    scrollregion=c.bbox("all")
-                )
-            )
-
-
-            canvas.create_window(
-                (0, 0),
-                window=scrollable,
-                anchor="nw"
-            )
-
-
-            canvas.configure(
-                yscrollcommand=scrollbar.set
-            )
-
-
-            canvas.pack(
-                side="left",
-                fill="both",
-                expand=True
-            )
-
-
-            scrollbar.pack(
-                side="right",
-                fill="y"
-            )
-
-
-            for col in range(
-                QUANTIDADE_COLUNAS
-            ):
-
-                scrollable.grid_columnconfigure(
-                    col,
-                    weight=1
-                )
-
-
-            for index, item in enumerate(itens):
-
-                nome = item["nome"]
-
-                preco = item["preco"]
-
-                descricao = item["descricao"]
-
-
-                linha = (
-                    index //
-                    QUANTIDADE_COLUNAS
-                )
-
-                coluna = (
-                    index %
-                    QUANTIDADE_COLUNAS
-                )
-
-
-                card = tk.Frame(
-                    scrollable,
-                    bg=self.cores["card"],
-                    padx=12,
-                    pady=10
-                )
-
-
-                card.grid(
-                    row=linha,
-                    column=coluna,
-                    padx=8,
-                    pady=6,
-                    sticky="nsew"
-                )
-
-                # Imagem do produto
-                foto = self.carregar_imagem_produto(nome)
-
-                if foto:
-                    label_imagem = tk.Label(
-                        card,
-                        image=foto,
-                        bg=self.cores["card"]
-                    )
-                    label_imagem.image = foto
-                    label_imagem.pack(
-                        fill="x",
-                        pady=(0, 8)
-                    )
-                else:
-                    tk.Label(
-                        card,
-                        text="🍽️",
-                        font=("Segoe UI", 42),
-                        bg=self.cores["card"],
-                        fg=self.cores["texto"],
-                        height=2
-                    ).pack(fill="x", pady=(0, 8))
-
-                tk.Label(
-                    card,
-                    text=f"{nome}\nR$ {preco:.2f}",
-                    font=FONTE_ITEM,
-                    bg=self.cores["card"],
-                    fg=self.cores["subtitulo"],
-                    justify="left"
-                ).pack(
-                    anchor="w"
-                )
-
-
-                tk.Label(
-                    card,
-                    text=descricao,
-                    font=FONTE_DESC,
-                    bg=self.cores["card"],
-                    fg=self.cores["texto"],
-                    wraplength=260,
-                    justify="left"
-                ).pack(
-                    anchor="w",
-                    pady=(4, 8)
-                )
-
-
-                controle = tk.Frame(
-                    card,
-                    bg=self.cores["card"]
-                )
-
-                controle.pack(
-                    fill="x"
-                )
-
-
-                tk.Label(
-                    controle,
-                    text="Quantidade:",
-                    bg=self.cores["card"],
-                    fg=self.cores["texto"]
-                ).pack(
-                    side="left"
-                )
-
-
-                spin = tk.Spinbox(
-                    controle,
-                    from_=0,
-                    to=99,
-                    width=4,
-                    font=FONTE_ITEM,
-                    bg=self.cores["entry_bg"],
-                    fg=self.cores["entry_fg"],
-                    buttonbackground=self.cores["acento"],
-                    justify="center",
-                    command=self.atualizar_total
-                )
-
-
-                spin.pack(
-                    side="right"
-                )
-
-
-                # Atualiza o total também quando
-                # o usuário digita diretamente.
-
-                spin.bind(
-                    "<KeyRelease>",
-                    lambda event:
-                    self.atualizar_total()
-                )
-
-
-                self.pedidos[nome] = (
-                    spin,
-                    preco
-                )
-
-
-    # ======================================================
-    # TOTAL
-    # ======================================================
-
-    def atualizar_total(self):
-
-        if not hasattr(
-            self,
-            "lbl_total"
-        ):
+    def carregar_imagem(self, url, label):
+        if not PIL_OK:
             return
 
-
-        total = 0
-
-
-        for nome, (
-            spin,
-            preco
-        ) in self.pedidos.items():
-
+        def baixar():
             try:
+                resp = requests.get(url, timeout=6)
+                resp.raise_for_status()
+                img = Image.open(BytesIO(resp.content))
+                img.thumbnail((220, 120))
+                foto = ImageTk.PhotoImage(img)
 
-                quantidade = int(
-                    spin.get()
-                )
+                def atualizar():
+                    self.imagens.append(foto)
+                    if label.winfo_exists():
+                        label.configure(image=foto, text="")
 
-                total += (
-                    quantidade *
-                    preco
-                )
-
-            except ValueError:
-
+                self.root.after(0, atualizar)
+            except Exception:
                 pass
 
+        threading.Thread(target=baixar, daemon=True).start()
 
-        self.lbl_total.config(
-            text=f"TOTAL: R$ {total:.2f}"
-        )
+    # ========================================================
+    # GERENCIAMENTO DO CARRINHO
+    # ========================================================
 
+    def adicionar_carrinho(self, produto):
+        nome = produto["nome"]
+        if nome not in self.carrinho:
+            self.carrinho[nome] = {"produto": produto, "quantidade": 0}
+        self.carrinho[nome]["quantidade"] += 1
+        messagebox.showinfo("Carrinho", f"✅ {produto['nome']} adicionado ao carrinho!")
+        self.mostrar_menu()
 
-    # ======================================================
-    # FINALIZAR PEDIDO
-    # ======================================================
+    def alterar_quantidade(self, nome, valor):
+        if nome in self.carrinho:
+            self.carrinho[nome]["quantidade"] += valor
+            if self.carrinho[nome]["quantidade"] <= 0:
+                del self.carrinho[nome]
+            self.mostrar_carrinho()
 
-    def finalizar_pedido(self):
+    def remover_item(self, nome):
+        if nome in self.carrinho:
+            del self.carrinho[nome]
+            self.mostrar_carrinho()
 
-        itens_selecionados = []
+    def calcular_total(self):
+        return sum(i["produto"]["preco"] * i["quantidade"] for i in self.carrinho.values())
 
-        total = 0
+    def mostrar_carrinho(self):
+        self.limpar_tela()
+        cores = CORES[TEMA]
 
+        header = tk.Frame(self.root, bg=cores["card"], height=65)
+        header.pack(fill="x")
+        header.pack_propagate(False)
 
-        for nome, (
-            spin,
-            preco
-        ) in self.pedidos.items():
+        tk.Label(header, text="🛒 MEU CARRINHO", font=("Arial", 20, "bold"), bg=cores["card"], fg=cores["text"]).pack(side="left", padx=20)
+        ttk.Button(header, text="← Voltar ao cardápio", command=self.mostrar_menu).pack(side="right", padx=20)
 
-            try:
+        container = tk.Frame(self.root, bg=cores["bg"])
+        container.pack(fill="both", expand=True, padx=30, pady=20)
 
-                quantidade = int(
-                    spin.get()
-                )
-
-            except ValueError:
-
-                quantidade = 0
-
-
-            if quantidade > 0:
-
-                subtotal = (
-                    quantidade *
-                    preco
-                )
-
-                total += subtotal
-
-
-                itens_selecionados.append({
-
-                    "item": nome,
-
-                    "quantidade": quantidade,
-
-                    "preco_unitario": preco,
-
-                    "subtotal": round(
-                        subtotal,
-                        2
-                    )
-                })
-
-
-        if not itens_selecionados:
-
-            messagebox.showwarning(
-                "Pedido",
-                "Selecione pelo menos um produto."
-            )
-
+        if not self.carrinho:
+            tk.Label(container, text="Seu carrinho está vazio.", font=("Arial", 18), bg=cores["bg"], fg=cores["sub"]).pack(pady=80)
+            ttk.Button(container, text="VER CARDÁPIO", command=self.mostrar_menu).pack()
             return
 
+        for nome, item in list(self.carrinho.items()):
+            prod = item["produto"]
+            qtd = item["quantidade"]
 
-        pedido = {
+            linha = tk.Frame(container, bg=cores["card"], padx=15, pady=12)
+            linha.pack(fill="x", pady=5)
 
-            "id_pedido":
-                int(datetime.now().timestamp()),
+            tk.Label(linha, text=prod["nome"], font=("Arial", 13, "bold"), bg=cores["card"], fg=cores["text"], width=22, anchor="w").pack(side="left")
+            tk.Label(linha, text=formatar_moeda(prod["preco"]), bg=cores["card"], fg=cores["accent2"], font=("Arial", 11, "bold")).pack(side="left", padx=15)
 
-            "data_hora":
-                datetime.now().strftime(
-                    "%Y-%m-%d %H:%M:%S"
-                ),
+            ttk.Button(linha, text="−", command=lambda n=nome: self.alterar_quantidade(n, -1)).pack(side="left", padx=2)
+            tk.Label(linha, text=str(qtd), width=4, bg=cores["card"], fg=cores["text"], font=("Arial", 11, "bold")).pack(side="left")
+            ttk.Button(linha, text="+", command=lambda n=nome: self.alterar_quantidade(n, 1)).pack(side="left", padx=2)
 
-            "cliente": {
+            ttk.Button(linha, text="Remover", command=lambda n=nome: self.remover_item(n)).pack(side="right")
 
-                "nome":
-                    self.dados_cliente["nome"],
+        rodape = tk.Frame(container, bg=cores["bg"])
+        rodape.pack(fill="x", pady=25)
 
-                "usuario":
-                    self.dados_cliente["usuario"],
+        tk.Label(rodape, text=f"TOTAL: {formatar_moeda(self.calcular_total())}", font=("Arial", 20, "bold"), bg=cores["bg"], fg=cores["text"]).pack(side="left")
+        ttk.Button(rodape, text="FINALIZAR PEDIDO", command=self.finalizar_pedido).pack(side="right")
 
-                "forma_pagamento":
-                    self.dados_cliente["pagamento"]
-            },
+    # ========================================================
+    # CHECKOUT CORRIGIDO
+    # ========================================================
 
-            "itens":
-                itens_selecionados,
+    def finalizar_pedido(self):
+        if not self.carrinho:
+            messagebox.showwarning("Carrinho", "Adicione produtos antes de finalizar.")
+            return
 
-            "total":
-                round(total, 2)
-        }
+        cores = CORES[TEMA]
+
+        janela = tk.Toplevel(self.root)
+        janela.title("Finalizar Pedido")
+        janela.geometry("520x640")
+        janela.configure(bg=cores["bg"])
+        janela.transient(self.root)
+        janela.grab_set()
+
+        tk.Label(janela, text="📦 CHECKOUT", font=("Arial", 20, "bold"), bg=cores["bg"], fg=cores["accent2"]).pack(pady=15)
+
+        form = tk.Frame(janela, bg=cores["card"], padx=25, pady=20)
+        form.pack(fill="both", expand=True, padx=20, pady=(0, 20))
+
+        tk.Label(form, text="CEP", bg=cores["card"], fg=cores["text"], font=("Arial", 10, "bold")).pack(anchor="w")
+        cep_entry = tk.Entry(form, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat")
+        cep_entry.pack(fill="x", pady=(3, 8), ipady=6)
+
+        tk.Label(form, text="Endereço Completo", bg=cores["card"], fg=cores["text"], font=("Arial", 10, "bold")).pack(anchor="w")
+        endereco_entry = tk.Entry(form, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat")
+        endereco_entry.pack(fill="x", pady=(3, 8), ipady=6)
+
+        def buscar_cep():
+            cep_limpo = re.sub(r"\D", "", cep_entry.get())
+            if len(cep_limpo) != 8:
+                messagebox.showwarning("CEP", "Digite um CEP válido com 8 dígitos.", parent=janela)
+                return
+
+            try:
+                resp = requests.get(f"https://viacep.com.br/ws/{cep_limpo}/json/", timeout=5)
+                dados = resp.json()
+                if dados.get("erro"):
+                    messagebox.showerror("CEP", "CEP não localizado.", parent=janela)
+                    return
+
+                rua_completa = f"{dados.get('logradouro', '')}, {dados.get('bairro', '')}, {dados.get('localidade', '')} - {dados.get('uf', '')}"
+                endereco_entry.delete(0, tk.END)
+                endereco_entry.insert(0, rua_completa)
+            except Exception:
+                messagebox.showerror("Erro", "Falha ao conectar com o serviço de CEP.", parent=janela)
+
+        ttk.Button(form, text="🔎 Buscar Endereço", command=buscar_cep).pack(fill="x", pady=(0, 10))
+
+        tk.Label(form, text="Número / Complemento", bg=cores["card"], fg=cores["text"], font=("Arial", 10, "bold")).pack(anchor="w")
+        numero_entry = tk.Entry(form, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat")
+        numero_entry.pack(fill="x", pady=(3, 10), ipady=6)
+
+        tk.Label(form, text="Forma de Pagamento", bg=cores["card"], fg=cores["text"], font=("Arial", 10, "bold")).pack(anchor="w")
+        pagamento = ttk.Combobox(form, values=["PIX", "Cartão de Crédito", "Cartão de Débito", "Dinheiro"], state="readonly")
+        pagamento.current(0)
+        pagamento.pack(fill="x", pady=(3, 15))
+
+        tk.Label(form, text=f"Total: {formatar_moeda(self.calcular_total())}", bg=cores["card"], fg=cores["accent2"], font=("Arial", 15, "bold")).pack(pady=5)
+
+        def confirmar():
+            cep = cep_entry.get().strip()
+            endereco = endereco_entry.get().strip()
+            numero = numero_entry.get().strip()
+            forma = pagamento.get()
+
+            if not cep or not endereco or not numero:
+                messagebox.showwarning("Atenção", "Preencha o CEP, Endereço e Número antes de confirmar!", parent=janela)
+                return
+
+            resumo = [f"{item['quantidade']}x {item['produto']['nome']}" for item in self.carrinho.values()]
+            itens_str = ", ".join(resumo)
+            total = self.calcular_total()
+
+            try:
+                conexao = sqlite3.connect(DB_NAME)
+                cursor = conexao.cursor()
+                cursor.execute("""
+                    INSERT INTO pedidos (cliente, usuario, data_hora, itens, total, cep, endereco, numero, forma_pagamento)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (self.nome_atual, self.usuario_atual, datetime.now().strftime("%d/%m/%Y %H:%M:%S"), itens_str, total, cep, endereco, numero, forma))
+                conexao.commit()
+                conexao.close()
+
+                self.carrinho.clear()
+                janela.destroy()
+                messagebox.showinfo("Sucesso", "✅ Pedido confirmado com sucesso!")
+                self.mostrar_menu()
+            except Exception as e:
+                messagebox.showerror("Erro ao Salvar", f"Não foi possível gravar o pedido: {e}", parent=janela)
+
+        ttk.Button(form, text="✅ CONFIRMAR PEDIDO", command=confirmar).pack(fill="x", pady=8)
+
+    # ========================================================
+    # HISTÓRICO DE PEDIDOS
+    # ========================================================
+
+    def mostrar_historico(self):
+        self.limpar_tela()
+        cores = CORES[TEMA]
+
+        header = tk.Frame(self.root, bg=cores["card"], height=65)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(header, text="📜 MEUS PEDIDOS", font=("Arial", 18, "bold"), bg=cores["card"], fg=cores["text"]).pack(side="left", padx=20)
+        ttk.Button(header, text="← Voltar", command=self.mostrar_menu).pack(side="right", padx=20)
+
+        container = tk.Frame(self.root, bg=cores["bg"])
+        container.pack(fill="both", expand=True, padx=30, pady=20)
+
+        conexao = sqlite3.connect(DB_NAME)
+        cursor = conexao.cursor()
+        cursor.execute("SELECT data_hora, itens, total, endereco, numero, forma_pagamento FROM pedidos WHERE usuario = ? ORDER BY id DESC", (self.usuario_atual,))
+        pedidos = cursor.fetchall()
+        conexao.close()
+
+        if not pedidos:
+            tk.Label(container, text="Nenhum pedido encontrado.", font=("Arial", 16), bg=cores["bg"], fg=cores["sub"]).pack(pady=80)
+            return
+
+        canvas = tk.Canvas(container, bg=cores["bg"], highlightthickness=0)
+        scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+        conteudo = tk.Frame(canvas, bg=cores["bg"])
+
+        conteudo.bind("<Configure>", lambda e: canvas.configure(scrollregion=canvas.bbox("all")))
+        canvas.create_window((0, 0), window=conteudo, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+
+        canvas.pack(side="left", fill="both", expand=True)
+        scrollbar.pack(side="right", fill="y")
+
+        for p in pedidos:
+            card = tk.Frame(conteudo, bg=cores["card"], padx=15, pady=12)
+            card.pack(fill="x", pady=6, expand=True)
+
+            tk.Label(card, text=f"📅 Data: {p[0]}", font=("Arial", 10, "bold"), bg=cores["card"], fg=cores["accent2"]).pack(anchor="w")
+            tk.Label(card, text=f"🛍️ Itens: {p[1]}", font=("Arial", 11), bg=cores["card"], fg=cores["text"]).pack(anchor="w", pady=2)
+            tk.Label(card, text=f"💳 Pagamento: {p[5]} | Total: {formatar_moeda(p[2])}", font=("Arial", 11, "bold"), bg=cores["card"], fg=cores["text"]).pack(anchor="w")
+
+    # ========================================================
+    # IA ASSISTENTE DINÂMICA
+    # ========================================================
+
+    def abrir_chat(self):
+        if self.janela_chat and self.janela_chat.winfo_exists():
+            self.janela_chat.lift()
+            return
+
+        cores = CORES[TEMA]
+        self.janela_chat = tk.Toplevel(self.root)
+        self.janela_chat.title("🤖 Suporte IA")
+        self.janela_chat.geometry("550x650")
+        self.janela_chat.configure(bg=cores["bg"])
+        self.janela_chat.protocol("WM_DELETE_WINDOW", self.fechar_chat)
+
+        header = tk.Frame(self.janela_chat, bg=cores["accent"], height=60)
+        header.pack(fill="x")
+        header.pack_propagate(False)
+
+        tk.Label(header, text="🤖 Assistente IA", font=("Arial", 16, "bold"), bg=cores["accent"], fg="white").pack(side="left", padx=15)
+
+        self.chat_texto = tk.Text(self.janela_chat, bg=cores["card"], fg=cores["text"], font=("Arial", 10), wrap="word", state="disabled", padx=10, pady=10, relief="flat")
+        self.chat_texto.pack(fill="both", expand=True, padx=10, pady=10)
+
+        f_ent = tk.Frame(self.janela_chat, bg=cores["bg"])
+        f_ent.pack(fill="x", padx=10, pady=(0, 10))
+
+        self.chat_entry = tk.Entry(f_ent, bg=cores["entry"], fg=cores["text"], insertbackground=cores["text"], relief="flat", font=("Arial", 10))
+        self.chat_entry.pack(side="left", fill="x", expand=True, ipady=8, padx=(0, 5))
+
+        ttk.Button(f_ent, text="ENVIAR", command=self.enviar_chat).pack(side="right")
+        self.chat_entry.bind("<Return>", lambda e: self.enviar_chat())
+
+        self.adicionar_chat("IA", f"Olá, {self.nome_atual}! Como posso te ajudar hoje?")
+
+    def fechar_chat(self):
+        if self.janela_chat:
+            self.janela_chat.destroy()
+        self.janela_chat = None
+
+    def adicionar_chat(self, autor, msg):
+        if self.chat_texto:
+            self.chat_texto.configure(state="normal")
+            self.chat_texto.insert(tk.END, f"{autor}: {msg}\n\n")
+            self.chat_texto.configure(state="disabled")
+            self.chat_texto.see(tk.END)
+
+    def enviar_chat(self):
+        if not self.chat_entry:
+            return
+        msg = self.chat_entry.get().strip()
+        if not msg:
+            return
+        self.chat_entry.delete(0, tk.END)
+        self.adicionar_chat("Você", msg)
+        self.root.after(300, lambda: self.processar_ia(msg))
+
+    def processar_ia(self, mensagem):
+        texto = normalizar_texto(mensagem)
+        produtos = todos_produtos()
+
+        if any(w in texto for w in ["hora", "horario", "aberto", "fechado"]):
+            status = "🟢 ABERTO" if restaurante_aberto() else "🔴 FECHADO"
+            resp = f"Status: {status}\nHorário: {INFO_RESTAURANTE['horario_abertura']}h às {INFO_RESTAURANTE['horario_fechamento']}h."
+        elif "mais barato" in texto:
+            barato = min(produtos, key=lambda x: x["preco"])
+            resp = f"O item mais barato do cardápio é **{barato['nome']}** por {formatar_moeda(barato['preco'])}."
+        elif any(w in texto for w in ["orcamento", "gostar", "posso gastar", "reais"]):
+            numeros = re.findall(r"\d+", texto)
+            if numeros:
+                v = float(numeros[0])
+                opcoes = [p for p in produtos if p["preco"] <= v]
+                if opcoes:
+                    res = [f"Com R$ {v:.2f}, você pode comprar:"]
+                    for o in opcoes:
+                        res.append(f"• {o['nome']} - {formatar_moeda(o['preco'])}")
+                    resp = "\n".join(res)
+                else:
+                    resp = f"Com R$ {v:.2f} não temos opções disponíveis no momento."
+            else:
+                resp = "Informe um valor limite em reais para eu filtrar as opções!"
+        else:
+            resp = "Posso consultar horários, verificar itens por preço ou calcular o que você pode comprar com seu orçamento!"
+
+        self.adicionar_chat("IA", resp)
 
 
-        registrar_pedido(
-            pedido
-        )
-
-
-        resumo = (
-            "✅ PEDIDO FINALIZADO!\n\n"
-            f"Cliente: {self.dados_cliente['nome']}\n"
-            f"Pagamento: {self.dados_cliente['pagamento']}\n\n"
-        )
-
-
-        for item in itens_selecionados:
-
-            resumo += (
-                f"{item['quantidade']}x "
-                f"{item['item']} "
-                f"= R$ {item['subtotal']:.2f}\n"
-            )
-
-
-        resumo += (
-            f"\nTOTAL: R$ {total:.2f}\n\n"
-            "Pedido salvo automaticamente."
-        )
-
-
-        messagebox.showinfo(
-            "Pedido realizado!",
-            resumo
-        )
-
-
-        self.mostrar_tela_cardapio()
-
-
-# ==========================================================
-# INICIAR SISTEMA
-# ==========================================================
+# ============================================================
+# EXECUÇÃO DA APLICAÇÃO
+# ============================================================
 
 if __name__ == "__main__":
-
     root = tk.Tk()
-
-    app = SistemaGourmetApp(root)
-
+    app = GourmetService(root)
     root.mainloop()
