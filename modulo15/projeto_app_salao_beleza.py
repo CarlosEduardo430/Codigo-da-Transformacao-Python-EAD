@@ -12,15 +12,12 @@ alterar serviços, cancelar registros e gerar relatórios financeiros simples.
 
 '''
 
-
-# 1. Configuração Inicial (Tabela de Preços e Variáveis de Armazenamento)
 tabela_precos = {
     'corte': 30.0,
     'tintura': 20.0,
     'completo': 45.0
 }
 
-# Variáveis para guardar o agendamento atual (Estado inicial)
 nome_cliente = "Ninguém"
 cliente_telefone = "0000-0000"
 servico_escolhido = "Nenhum"
@@ -29,7 +26,7 @@ valor_servico = 0.0
 print('\n== Bem-vindo ao sistema de gerenciamento do Salão de Beleza! ===\n')
 
 while True:
-    # Exibição do Menu
+
     print("\n=== GESTÃO DO SALÃO ===")
     print("1. Agendar Cliente")
     print("2. Ver Agenda")
@@ -48,7 +45,6 @@ while True:
         print(f"Serviços disponíveis: {list(tabela_precos.keys())}")
         servico = input("Digite o serviço desejado: ").lower()
         
-        # Busca o preço no dicionário e guarda nas nossas variáveis
         valor_servico = tabela_precos.get(servico, 0.0)
         
         if valor_servico > 0:
@@ -99,7 +95,7 @@ while True:
 
     elif escolha == '0':
         print("Saindo do sistema. Até logo!")
-        # Comando para o programa não fechar imediatamente no Windows
+        
         input('\nPressione Enter para sair...') 
         break
 
